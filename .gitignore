@@ -1,0 +1,4 @@
+.env
+positions.db
+__pycache__/
+*.pyc
