@@ -10,7 +10,7 @@ from typing import Optional
 
 from fastapi import FastAPI, Depends, HTTPException, status, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from pydantic import BaseModel
 
@@ -109,6 +109,11 @@ class Token(BaseModel):
 class TokenData(BaseModel):
     username: Optional[str] = None
     role:     Optional[str] = None
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
 
 
 class UserCreate(BaseModel):
@@ -220,7 +225,7 @@ async def register(
 
 
 @app.post("/auth/login", response_model=Token, tags=["auth"], summary="Авторизація")
-async def login(form_data: OAuth2PasswordRequestForm = Depends()) -> dict:
+async def login(form_data: LoginRequest) -> dict:
     user = await get_user(form_data.username)
     if not user or not verify_password(form_data.password, user.get("hashed_password", "")):
         raise HTTPException(

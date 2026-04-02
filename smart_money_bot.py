@@ -82,19 +82,19 @@ SYMBOLS = [
   "AAVEUSDT", "TRXUSDT", "ICPUSDT", "ALGOUSDT",
 ]
 
-TREND_TF          = "1d"
-HIGHER_TF         = "4h"
-LOWER_TF          = "15m"
+TREND_TF          = "4h"   # Напрямок
+HIGHER_TF         = "1h"   # Структура (BOS, POI)
+LOWER_TF          = "15m"  # Точка входу
 
 # Скільки свічок тримати в кеші для кожного символу і TF
 KLINE_CACHE_SIZE  = 250
 
 SCAN_INTERVAL_SEC = 300
-LEVERAGE          = 5
+LEVERAGE          = 15     # Збільшене плече (оскільки стопи будуть дуже короткими)
+RISK_PCT          = 1.0    # Залишаємо 1% ризику на угоду (це важливо!)
+MAX_SL_PCT        = 0.05   # Дозволяємо трохи більший відступ для волатильної крипти
 
-RISK_PCT   = 1.0
 MARGIN_PCT = 3.0
-MAX_SL_PCT = 0.025
 MIN_OPTIONAL_SCORE = 6
 STRICT_MIN_SCORE   = 9
 
@@ -120,8 +120,8 @@ OB_MITIGATION_THRESHOLD = 0.50
 OTE_LOW  = 0.618
 OTE_HIGH = 0.786
 
-TP_RR_RATIOS = [1.0, 2.0, 3.0]
-TP_VOLUMES   = [0.30, 0.30, 0.40]
+TP_RR_RATIOS = [2.0, 3.0, 5.0]
+TP_VOLUMES   = [0.40, 0.40, 0.20]
 
 _TP_THRESHOLD_MARGIN = 0.02
 TP1_THRESHOLD = round(1.0 - TP_VOLUMES[0] + _TP_THRESHOLD_MARGIN, 4)
@@ -1591,8 +1591,8 @@ def smc_analysis(df_daily: pd.DataFrame,
     if dist > 0.03:
       continue
     if zone["ob_bottom"] * 0.998 <= price <= zone["ob_top"] * 1.002:
-      optional_score += 3
-      detail.append("✅ OB+FVG: Ціна всередині свіжої зони (+3)")
+      optional_score += 4  # Було 3. Робимо це головним критерієм
+      detail.append("✅ OB+FVG: Ціна всередині свіжої зони (+4)")
       limit_entry = zone["entry"]
       ob_top_found, ob_bottom_found = zone["ob_top"], zone["ob_bottom"]
       ob_found = True; break
@@ -1617,7 +1617,7 @@ def smc_analysis(df_daily: pd.DataFrame,
 
   sfp_found, sfp_desc = detect_sfp(df_15m, direction)
   if sfp_found:
-    optional_score += 2; detail.append(f"{sfp_desc} (+2)")
+    optional_score += 4; detail.append(f"{sfp_desc} (+2)")
   else:
     detail.append(f"⚪ SFP: {sfp_desc} (0)")
 
@@ -1625,7 +1625,7 @@ def smc_analysis(df_daily: pd.DataFrame,
     df_15m, direction, ob_top_found, ob_bottom_found
   )
   if in_ote:
-    optional_score += 2; detail.append(f"{ote_desc} (+2)")
+    optional_score += 3; detail.append(f"{ote_desc} (+2)")
     if ote_entry is not None:
       limit_entry = ote_entry
   else:
@@ -1675,35 +1675,28 @@ def smc_analysis(df_daily: pd.DataFrame,
 # ─────────────────────────────────────────────
 def calc_sl_from_structure(df_15m: pd.DataFrame, atr_4h: float,
                            direction: str, entry_price: float) -> float:
-  highs, lows = find_swing_points(df_15m, lookback=3, confirm=2)
-  min_buffer  = atr_4h * 0.5
-  max_sl_dist = atr_4h * ATR_SL_MULT
+  # У SMC стоп ставиться строго за структурний екстремум з мінімальним буфером
+  highs, lows = find_swing_points(df_15m, lookback=5, confirm=2)
+
+  # Використовуємо буфер 0.15% (від хибних проколів спредом), замість ATR
+  buffer_pct = 0.0015
 
   if direction == "bullish":
     relevant_lows = [l[1] for l in lows if l[1] < entry_price]
     if relevant_lows:
-      structure_sl = max(relevant_lows)
-      atr_15m = calc_atr(df_15m, ATR_PERIOD).iloc[-1]
-      structure_sl -= atr_15m * 0.3
+      structure_sl = max(relevant_lows) # Найближчий Swing Low нижче входу
     else:
-      structure_sl = entry_price - max_sl_dist
-    sl = max(
-      entry_price - max_sl_dist,
-      min(structure_sl, entry_price - min_buffer)
-    )
+      structure_sl = df_15m['low'].iloc[-10:].min() # Локальний мінімум
+
+    return structure_sl * (1 - buffer_pct)
   else:
     relevant_highs = [h[1] for h in highs if h[1] > entry_price]
     if relevant_highs:
-      structure_sl = min(relevant_highs)
-      atr_15m = calc_atr(df_15m, ATR_PERIOD).iloc[-1]
-      structure_sl += atr_15m * 0.3
+      structure_sl = min(relevant_highs) # Найближчий Swing High вище входу
     else:
-      structure_sl = entry_price + max_sl_dist
-    sl = min(
-      entry_price + max_sl_dist,
-      max(structure_sl, entry_price + min_buffer)
-    )
-  return sl
+      structure_sl = df_15m['high'].iloc[-10:].max()
+
+    return structure_sl * (1 + buffer_pct)
 
 
 def calc_position(symbol: str, balance: float, price: float,
